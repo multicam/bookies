@@ -116,7 +116,7 @@ export function Sidebar({ selectedTags, onTagsChange, onFilterChange, className 
   ]
 
   return (
-    <div className={cn("w-64 border-r bg-muted/10", className)}>
+    <div className={cn("w-full border-r bg-muted/10", className)}>
       <ScrollArea className="h-full">
         <div className="p-4 space-y-4">
 

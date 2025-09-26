@@ -8,6 +8,7 @@ import { ExternalLink, Star, Bookmark, Calendar } from 'lucide-react'
 import { format } from 'date-fns'
 import type { BookmarkWithTags } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { useFavicon } from '@/lib/favicon-service'
 
 interface BookmarkCardProps {
   bookmark: BookmarkWithTags
@@ -25,6 +26,8 @@ export const BookmarkCard = memo(function BookmarkCard({
   className
 }: BookmarkCardProps) {
   const tags = bookmark.tags.map(bt => bt.tag)
+  const fallbackFavicon = useFavicon(bookmark.domain || bookmark.url)
+  const faviconUrl = bookmark.faviconUrl || fallbackFavicon
 
   const handleCardClick = (e: React.MouseEvent) => {
     // Don't trigger selection when clicking on links or buttons
@@ -49,9 +52,9 @@ export const BookmarkCard = memo(function BookmarkCard({
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                {bookmark.faviconUrl && (
+                {faviconUrl && (
                   <img
-                    src={bookmark.faviconUrl}
+                    src={faviconUrl}
                     alt=""
                     className="w-4 h-4 flex-shrink-0"
                     onError={(e) => {
@@ -136,9 +139,9 @@ export const BookmarkCard = memo(function BookmarkCard({
         onClick={handleCardClick}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          {bookmark.faviconUrl && (
+          {faviconUrl && (
             <img
-              src={bookmark.faviconUrl}
+              src={faviconUrl}
               alt=""
               className="w-4 h-4 flex-shrink-0"
               onError={(e) => {
@@ -213,9 +216,9 @@ export const BookmarkCard = memo(function BookmarkCard({
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              {bookmark.faviconUrl && (
+              {faviconUrl && (
                 <img
-                  src={bookmark.faviconUrl}
+                  src={faviconUrl}
                   alt=""
                   className="w-4 h-4 flex-shrink-0"
                   onError={(e) => {

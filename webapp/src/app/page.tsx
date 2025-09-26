@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Header } from '@/components/layout/header'
 import { Sidebar } from '@/components/layout/sidebar'
 import { VirtualBookmarkList } from '@/components/bookmarks/virtual-bookmark-list'
+import { useResizable } from '@/lib/hooks/use-resizable'
 import type { ViewMode, SortConfig } from '@/lib/types'
 
 export default function HomePage() {
@@ -14,6 +15,13 @@ export default function HomePage() {
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     field: 'createdAt',
     order: 'desc'
+  })
+
+  const { width: sidebarWidth, isResizing, startResize } = useResizable({
+    initialWidth: 256,
+    minWidth: 200,
+    maxWidth: 600,
+    storageKey: 'sidebar-width'
   })
 
   const handleFilterChange = (newFilters: any) => {
@@ -33,11 +41,23 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen bg-background">
-      <Sidebar
-        selectedTags={selectedTags}
-        onTagsChange={setSelectedTags}
-        onFilterChange={handleFilterChange}
-      />
+      <div
+        className="relative flex-shrink-0"
+        style={{ width: sidebarWidth }}
+      >
+        <Sidebar
+          selectedTags={selectedTags}
+          onTagsChange={setSelectedTags}
+          onFilterChange={handleFilterChange}
+          className="h-full"
+        />
+
+        {/* Resize Handle */}
+        <div
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 transition-colors"
+          onMouseDown={startResize}
+        />
+      </div>
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header
