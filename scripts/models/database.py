@@ -13,7 +13,17 @@ class DatabaseManager:
     """Manages SQLite database operations for bookmark system."""
 
     def __init__(self, db_path: str = "database/bookmarks.db"):
-        self.db_path = Path(db_path)
+        # Handle both absolute and relative paths
+        if not Path(db_path).is_absolute():
+            # For relative paths, look for webapp database first
+            webapp_db = Path("../database/bookmarks.db")
+            if webapp_db.exists():
+                self.db_path = webapp_db.resolve()
+            else:
+                self.db_path = Path(db_path)
+        else:
+            self.db_path = Path(db_path)
+
         self.db_path.parent.mkdir(exist_ok=True, parents=True)
         self.logger = logging.getLogger(__name__)
         self.init_database()
@@ -26,9 +36,9 @@ class DatabaseManager:
         return conn
 
     def init_database(self) -> None:
-        """Initialize database tables and indexes."""
+        """Initialize database tables and indexes to match Prisma schema."""
         with self.get_connection() as conn:
-            # Core bookmarks table
+            # Core bookmarks table (matches Prisma schema exactly)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS bookmarks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,80 +47,80 @@ class DatabaseManager:
                     description TEXT,
                     domain TEXT,
                     url_hash TEXT UNIQUE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    source TEXT NOT NULL, -- 'browser_export', 'manual', 'raindrop', etc.
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    imported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    source TEXT NOT NULL,
                     source_file TEXT,
-                    status TEXT DEFAULT 'active', -- 'active', 'archived', 'broken'
+                    status TEXT DEFAULT 'active',
                     favicon_url TEXT,
                     screenshot_url TEXT,
                     content_type TEXT,
                     language TEXT,
-                    read_status BOOLEAN DEFAULT FALSE,
-                    favorite BOOLEAN DEFAULT FALSE
+                    read_status BOOLEAN DEFAULT false,
+                    favorite BOOLEAN DEFAULT false
                 )
             """)
 
-            # Tags table
+            # Tags table (matches Prisma schema)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tags (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
                     color TEXT DEFAULT '#6B7280',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     usage_count INTEGER DEFAULT 0
                 )
             """)
 
-            # Many-to-many relationship between bookmarks and tags
+            # Many-to-many relationship between bookmarks and tags (matches Prisma schema)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS bookmark_tags (
                     bookmark_id INTEGER NOT NULL,
                     tag_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (bookmark_id, tag_id),
-                    FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE,
-                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                    FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE ON UPDATE NO ACTION,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE ON UPDATE NO ACTION
                 )
             """)
 
-            # Collections (hierarchical folders)
+            # Collections (hierarchical folders) - matches Prisma schema
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS collections (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     description TEXT,
                     parent_id INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     color TEXT DEFAULT '#6B7280',
                     icon TEXT,
-                    FOREIGN KEY (parent_id) REFERENCES collections(id) ON DELETE SET NULL
+                    FOREIGN KEY (parent_id) REFERENCES collections(id) ON DELETE SET NULL ON UPDATE NO ACTION
                 )
             """)
 
-            # Many-to-many relationship between bookmarks and collections
+            # Many-to-many relationship between bookmarks and collections - matches Prisma schema
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS bookmark_collections (
                     bookmark_id INTEGER NOT NULL,
                     collection_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (bookmark_id, collection_id),
-                    FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE,
-                    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+                    FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE ON UPDATE NO ACTION,
+                    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE ON UPDATE NO ACTION
                 )
             """)
 
-            # Import history for tracking processed files
+            # Import history for tracking processed files - matches Prisma schema
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS import_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     filename TEXT NOT NULL,
                     file_path TEXT NOT NULL,
                     file_hash TEXT NOT NULL,
-                    import_type TEXT NOT NULL, -- 'browser_html', 'yaml_structured', 'feed_category'
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    import_type TEXT NOT NULL,
+                    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     bookmarks_imported INTEGER DEFAULT 0,
                     bookmarks_skipped INTEGER DEFAULT 0,
                     errors TEXT,

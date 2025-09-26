@@ -17,8 +17,8 @@ from utils.metadata_extractor import MetadataExtractor
 
 @click.group()
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
-@click.option('--database', '-d', default='database/bookmarks.db',
-              help='Database file path', type=click.Path())
+@click.option('--database', '-d', default='../database/bookmarks.db',
+              help='Database file path (defaults to webapp database)', type=click.Path())
 @click.pass_context
 def cli(ctx, verbose, database):
     """Bookmark management CLI tool."""
@@ -34,6 +34,9 @@ def cli(ctx, verbose, database):
     ctx.ensure_object(dict)
     ctx.obj['db'] = DatabaseManager(database)
     ctx.obj['verbose'] = verbose
+
+    # Log which database we're using
+    click.echo(f"Using database: {ctx.obj['db'].db_path}")
 
 
 @cli.command()
