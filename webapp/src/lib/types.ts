@@ -1,13 +1,19 @@
-import type { Bookmark, Tag, Collection, Status } from '@prisma/client'
+import type { Bookmark, Tag, Collection } from '@prisma/client'
 
 // Enhanced types with relations
 export type BookmarkWithTags = Bookmark & {
-  tags: Array<{ tag: Tag }>
+  tags: Array<{
+    tag: Tag
+  }>
 }
 
 export type BookmarkWithRelations = Bookmark & {
-  tags: Array<{ tag: Tag }>
-  collections: Array<{ collection: Collection }>
+  tags: Array<{
+    tag: Tag
+  }>
+  collections: Array<{
+    collection: Collection
+  }>
 }
 
 // Search and filter types
@@ -16,7 +22,7 @@ export interface BookmarkFilters {
   tags?: string[]
   collections?: string[]
   domains?: string[]
-  status?: Status
+  status?: string
   favorite?: boolean
   readStatus?: boolean
   dateRange?: {

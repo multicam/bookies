@@ -21,9 +21,14 @@ class BookmarkDeduplicator:
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
         self.logger = logging.getLogger(__name__)
+        self._url_cache = {}  # Cache for normalized URLs
+        self._similarity_cache = {}  # Cache for similarity calculations
 
     def normalize_url(self, url: str) -> str:
-        """Normalize URL for deduplication comparison."""
+        """Normalize URL for deduplication comparison with caching."""
+        if url in self._url_cache:
+            return self._url_cache[url]
+        
         try:
             # Parse the URL
             parsed = urlparse(url.lower().strip())
@@ -65,20 +70,29 @@ class BookmarkDeduplicator:
                 ''  # Remove fragment
             ))
 
+            self._url_cache[url] = normalized
             return normalized
 
         except Exception as e:
             self.logger.debug(f"Error normalizing URL {url}: {e}")
-            return url.lower().strip()
+            fallback = url.lower().strip()
+            self._url_cache[url] = fallback
+            return fallback
 
     def calculate_url_similarity(self, url1: str, url2: str) -> float:
-        """Calculate similarity between two URLs."""
+        """Calculate similarity between two URLs with caching and optimizations."""
+        # Create cache key
+        cache_key = (url1, url2) if url1 < url2 else (url2, url1)
+        if cache_key in self._similarity_cache:
+            return self._similarity_cache[cache_key]
+        
         # Normalize URLs first
         norm_url1 = self.normalize_url(url1)
         norm_url2 = self.normalize_url(url2)
 
         # Exact match after normalization
         if norm_url1 == norm_url2:
+            self._similarity_cache[cache_key] = 1.0
             return 1.0
 
         # Parse URLs
@@ -88,10 +102,18 @@ class BookmarkDeduplicator:
 
             # Different domains are unlikely to be duplicates
             if parsed1.netloc != parsed2.netloc:
+                self._similarity_cache[cache_key] = 0.0
                 return 0.0
 
-            # Compare paths using string similarity
-            path_similarity = difflib.SequenceMatcher(None, parsed1.path, parsed2.path).ratio()
+            # Fast path similarity check - compare first 50 chars
+            if len(norm_url1) > 50 and len(norm_url2) > 50:
+                prefix_similarity = sum(c1 == c2 for c1, c2 in zip(norm_url1[:50], norm_url2[:50])) / 50
+                if prefix_similarity < 0.4:  # Very different URLs
+                    self._similarity_cache[cache_key] = prefix_similarity * 0.6  # Scale down
+                    return self._similarity_cache[cache_key]
+
+            # Compare paths using optimized similarity
+            path_similarity = self._fast_string_similarity(parsed1.path, parsed2.path)
 
             # Compare query parameters
             params1 = set(parse_qs(parsed1.query).keys())
@@ -103,14 +125,45 @@ class BookmarkDeduplicator:
                 param_similarity = 1.0
 
             # Weighted average
-            return (path_similarity * 0.8) + (param_similarity * 0.2)
+            result = (path_similarity * 0.8) + (param_similarity * 0.2)
+            self._similarity_cache[cache_key] = result
+            return result
 
         except Exception as e:
-            # Fallback to simple string similarity
-            return difflib.SequenceMatcher(None, norm_url1, norm_url2).ratio()
+            # Fallback to fast string similarity
+            result = self._fast_string_similarity(norm_url1, norm_url2)
+            self._similarity_cache[cache_key] = result
+            return result
+
+    def _fast_string_similarity(self, s1: str, s2: str) -> float:
+        """Fast string similarity using optimized algorithm."""
+        if not s1 and not s2:
+            return 1.0
+        if not s1 or not s2:
+            return 0.0
+        if s1 == s2:
+            return 1.0
+            
+        # Use Jaccard similarity for speed on long strings
+        if len(s1) > 100 or len(s2) > 100:
+            # Convert to character bigrams for better similarity
+            bigrams1 = set(s1[i:i+2] for i in range(len(s1)-1))
+            bigrams2 = set(s2[i:i+2] for i in range(len(s2)-1))
+            
+            if not bigrams1 and not bigrams2:
+                return 1.0
+            if not bigrams1 or not bigrams2:
+                return 0.0
+                
+            intersection = len(bigrams1.intersection(bigrams2))
+            union = len(bigrams1.union(bigrams2))
+            return intersection / union if union > 0 else 0.0
+        else:
+            # Use difflib for shorter strings
+            return difflib.SequenceMatcher(None, s1, s2).ratio()
 
     def calculate_title_similarity(self, title1: str, title2: str) -> float:
-        """Calculate similarity between two titles."""
+        """Calculate similarity between two titles with optimizations."""
         if not title1 or not title2:
             return 0.0
 
@@ -120,107 +173,220 @@ class BookmarkDeduplicator:
 
         if norm_title1 == norm_title2:
             return 1.0
-
-        return difflib.SequenceMatcher(None, norm_title1, norm_title2).ratio()
+            
+        # Quick word-based similarity for very different titles
+        words1 = set(norm_title1.split())
+        words2 = set(norm_title2.split())
+        
+        if words1 and words2:
+            word_similarity = len(words1.intersection(words2)) / len(words1.union(words2))
+            if word_similarity < 0.2:  # Very different word sets
+                return word_similarity * 0.5  # Scale down
+        
+        return self._fast_string_similarity(norm_title1, norm_title2)
 
     def find_exact_duplicates(self) -> List[List[Dict[str, Any]]]:
-        """Find bookmarks with exactly matching normalized URLs."""
+        """Find bookmarks with exactly matching normalized URLs using optimized database query."""
         duplicates = []
 
         try:
             with self.db.get_connection() as conn:
-                # Group bookmarks by normalized URL hash
+                # Use database-level grouping for better performance
                 cursor = conn.execute("""
+                    SELECT url_hash, COUNT(*) as count
+                    FROM bookmarks 
+                    WHERE status = 'active'
+                    GROUP BY url_hash
+                    HAVING count > 1
+                    ORDER BY count DESC
+                """)
+                
+                duplicate_hashes = [row['url_hash'] for row in cursor.fetchall()]
+                
+                if not duplicate_hashes:
+                    return duplicates
+                
+                # Get full details only for duplicates
+                placeholders = ','.join(['?' for _ in duplicate_hashes])
+                cursor = conn.execute(f"""
                     SELECT id, url, title, created_at, source, url_hash
                     FROM bookmarks
-                    WHERE status = 'active'
+                    WHERE status = 'active' AND url_hash IN ({placeholders})
                     ORDER BY url_hash, created_at ASC
-                """)
-
-                url_groups = defaultdict(list)
+                """, duplicate_hashes)
+                
+                # Group by url_hash
+                current_group = []
+                current_hash = None
+                
                 for row in cursor.fetchall():
-                    url_groups[row['url_hash']].append(dict(row))
-
-                # Find groups with multiple bookmarks
-                for url_hash, bookmarks in url_groups.items():
-                    if len(bookmarks) > 1:
-                        duplicates.append(bookmarks)
+                    row_dict = dict(row)
+                    if current_hash != row_dict['url_hash']:
+                        if current_group and len(current_group) > 1:
+                            duplicates.append(current_group)
+                        current_group = [row_dict]
+                        current_hash = row_dict['url_hash']
+                    else:
+                        current_group.append(row_dict)
+                
+                # Don't forget the last group
+                if current_group and len(current_group) > 1:
+                    duplicates.append(current_group)
 
         except Exception as e:
             self.logger.error(f"Error finding exact duplicates: {e}")
 
         return duplicates
 
-    def find_similar_duplicates(self, similarity_threshold: float = 0.9) -> List[List[Dict[str, Any]]]:
-        """Find bookmarks with similar URLs or titles."""
+    def find_similar_duplicates(self, similarity_threshold: float = 0.9, batch_size: int = 1000) -> List[List[Dict[str, Any]]]:
+        """Find bookmarks with similar URLs or titles using optimized batch processing."""
         duplicates = []
+        processed_pairs = set()
 
         try:
             with self.db.get_connection() as conn:
-                # Get all active bookmarks
+                # Get total count for progress tracking
+                count_cursor = conn.execute("SELECT COUNT(*) as count FROM bookmarks WHERE status = 'active'")
+                total_bookmarks = count_cursor.fetchone()['count']
+                
+                if total_bookmarks < 2:
+                    return duplicates
+                    
+                self.logger.info(f"Processing {total_bookmarks} bookmarks in batches of {batch_size}")
+
+                # Process bookmarks in batches by domain for efficiency
                 cursor = conn.execute("""
-                    SELECT id, url, title, created_at, source, domain
-                    FROM bookmarks
+                    SELECT domain, COUNT(*) as count
+                    FROM bookmarks 
                     WHERE status = 'active'
-                    ORDER BY domain, created_at ASC
+                    GROUP BY domain
+                    HAVING count > 1
+                    ORDER BY count DESC
                 """)
-
-                bookmarks = [dict(row) for row in cursor.fetchall()]
-
-                # Group by domain for efficiency
-                domain_groups = defaultdict(list)
-                for bookmark in bookmarks:
-                    domain_groups[bookmark['domain']].append(bookmark)
-
-                # Check for similarities within each domain
-                for domain, domain_bookmarks in domain_groups.items():
-                    if len(domain_bookmarks) < 2:
+                
+                domains_with_duplicates = [(row['domain'], row['count']) for row in cursor.fetchall()]
+                
+                for domain, domain_count in domains_with_duplicates:
+                    if domain_count < 2:
                         continue
-
-                    checked_pairs = set()
-
-                    for i, bookmark1 in enumerate(domain_bookmarks):
-                        for j, bookmark2 in enumerate(domain_bookmarks[i+1:], i+1):
-                            pair = tuple(sorted([bookmark1['id'], bookmark2['id']]))
-                            if pair in checked_pairs:
-                                continue
-                            checked_pairs.add(pair)
-
-                            # Calculate URL similarity
-                            url_similarity = self.calculate_url_similarity(
-                                bookmark1['url'], bookmark2['url']
-                            )
-
-                            # Calculate title similarity
-                            title_similarity = self.calculate_title_similarity(
-                                bookmark1['title'], bookmark2['title']
-                            )
-
-                            # Combined similarity (weighted toward URL)
-                            combined_similarity = (url_similarity * 0.8) + (title_similarity * 0.2)
-
-                            if combined_similarity >= similarity_threshold:
-                                # Check if this pair is already in a duplicate group
-                                found_group = None
-                                for dup_group in duplicates:
-                                    if any(b['id'] == bookmark1['id'] for b in dup_group) or \
-                                       any(b['id'] == bookmark2['id'] for b in dup_group):
-                                        found_group = dup_group
-                                        break
-
-                                if found_group:
-                                    # Add to existing group if not already there
-                                    if not any(b['id'] == bookmark1['id'] for b in found_group):
-                                        found_group.append(bookmark1)
-                                    if not any(b['id'] == bookmark2['id'] for b in found_group):
-                                        found_group.append(bookmark2)
-                                else:
-                                    # Create new group
-                                    duplicates.append([bookmark1, bookmark2])
+                        
+                    # Skip domains with too many bookmarks (likely to be noisy)
+                    if domain_count > 500:
+                        self.logger.info(f"Skipping domain {domain} with {domain_count} bookmarks (too many)")
+                        continue
+                    
+                    # Get bookmarks for this domain
+                    domain_cursor = conn.execute("""
+                        SELECT id, url, title, created_at, source, domain
+                        FROM bookmarks
+                        WHERE status = 'active' AND domain = ?
+                        ORDER BY created_at ASC
+                        LIMIT ?
+                    """, (domain, min(batch_size, domain_count)))
+                    
+                    domain_bookmarks = [dict(row) for row in domain_cursor.fetchall()]
+                    
+                    # Compare within domain using optimized algorithm
+                    domain_duplicates = self._find_similar_in_batch(
+                        domain_bookmarks, similarity_threshold, processed_pairs
+                    )
+                    duplicates.extend(domain_duplicates)
 
         except Exception as e:
             self.logger.error(f"Error finding similar duplicates: {e}")
 
+        return duplicates
+    
+    def _find_similar_in_batch(self, bookmarks: List[Dict], threshold: float, processed_pairs: set) -> List[List[Dict]]:
+        """Find similar bookmarks within a batch using optimized comparisons."""
+        if len(bookmarks) < 2:
+            return []
+            
+        duplicates = []
+        
+        # Pre-compute normalized data for fast comparison
+        normalized_data = []
+        for bookmark in bookmarks:
+            norm_url = self.normalize_url(bookmark['url'])
+            norm_title = re.sub(r'[^\w\s]', '', (bookmark['title'] or '').lower().strip())
+            
+            normalized_data.append({
+                'bookmark': bookmark,
+                'norm_url': norm_url,
+                'norm_title': norm_title,
+                'url_parts': urlparse(norm_url),
+                'title_words': set(norm_title.split()) if norm_title else set()
+            })
+        
+        # Compare pairs with early exit conditions
+        for i in range(len(normalized_data)):
+            for j in range(i + 1, len(normalized_data)):
+                item1, item2 = normalized_data[i], normalized_data[j]
+                
+                # Skip if already processed
+                pair = tuple(sorted([item1['bookmark']['id'], item2['bookmark']['id']]))
+                if pair in processed_pairs:
+                    continue
+                processed_pairs.add(pair)
+                
+                # Early exit conditions - skip expensive calculations if obvious non-match
+                # 1. Check if URLs are too different in length
+                url1_len, url2_len = len(item1['norm_url']), len(item2['norm_url'])
+                if abs(url1_len - url2_len) / max(url1_len, url2_len) > 0.5:
+                    continue
+                    
+                # 2. Check if paths are completely different
+                if (item1['url_parts'].path and item2['url_parts'].path and 
+                    not item1['url_parts'].path.startswith(item2['url_parts'].path[:10]) and
+                    not item2['url_parts'].path.startswith(item1['url_parts'].path[:10])):
+                    if len(item1['title_words'].intersection(item2['title_words'])) < 2:
+                        continue
+                
+                # 3. Quick title word overlap check
+                if item1['title_words'] and item2['title_words']:
+                    word_overlap = len(item1['title_words'].intersection(item2['title_words']))
+                    word_union = len(item1['title_words'].union(item2['title_words']))
+                    if word_union > 0 and word_overlap / word_union < 0.3:
+                        # Low word overlap, check if URLs are very similar to compensate
+                        if not (item1['norm_url'] and item2['norm_url'] and
+                                item1['norm_url'][:30] == item2['norm_url'][:30]):
+                            continue
+                
+                # Now do expensive similarity calculations
+                url_similarity = self.calculate_url_similarity(
+                    item1['bookmark']['url'], item2['bookmark']['url']
+                )
+                
+                # Early exit if URL similarity is too low
+                if url_similarity < threshold * 0.6:  # 60% of threshold
+                    continue
+                    
+                title_similarity = self.calculate_title_similarity(
+                    item1['bookmark']['title'], item2['bookmark']['title']
+                )
+                
+                # Combined similarity (weighted toward URL)
+                combined_similarity = (url_similarity * 0.8) + (title_similarity * 0.2)
+                
+                if combined_similarity >= threshold:
+                    # Find or create duplicate group
+                    found_group = None
+                    for dup_group in duplicates:
+                        if any(b['id'] == item1['bookmark']['id'] for b in dup_group) or \
+                           any(b['id'] == item2['bookmark']['id'] for b in dup_group):
+                            found_group = dup_group
+                            break
+                    
+                    if found_group:
+                        # Add to existing group if not already there
+                        if not any(b['id'] == item1['bookmark']['id'] for b in found_group):
+                            found_group.append(item1['bookmark'])
+                        if not any(b['id'] == item2['bookmark']['id'] for b in found_group):
+                            found_group.append(item2['bookmark'])
+                    else:
+                        # Create new group
+                        duplicates.append([item1['bookmark'], item2['bookmark']])
+        
         return duplicates
 
     def merge_bookmarks(self, bookmark_ids: List[int], keep_id: Optional[int] = None) -> Optional[int]:
@@ -247,12 +413,12 @@ class BookmarkDeduplicator:
                 if keep_id and keep_id in bookmark_ids:
                     primary_bookmark = next(b for b in bookmarks if b['id'] == keep_id)
                 else:
-                    # Keep the one with the most complete data or oldest
+                    # Keep the one with the most complete data or oldest (simpler scoring)
                     primary_bookmark = max(bookmarks, key=lambda b: (
                         len(b.get('title', '') or ''),
                         len(b.get('description', '') or ''),
                         bool(b.get('tags')),
-                        -int(b['created_at'].timestamp() if isinstance(b['created_at'], datetime) else 0)
+                        -b['id']  # Use ID as timestamp proxy (newer = higher ID)
                     ))
 
                 # Collect all unique tags

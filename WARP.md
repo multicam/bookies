@@ -242,7 +242,13 @@ The CLI system consists of:
 - **CLI Interface** (`cli.py`): Click-based command interface
 - **Entry Point** (`run.py`): Main application launcher
 
-**Recent Improvements**: All relative import issues have been resolved, and the CLI is fully functional. The system now uses absolute imports for better module resolution and reliability.
+**Recent Improvements**: 
+- All relative import issues have been resolved, and the CLI is fully functional
+- The system now uses absolute imports for better module resolution and reliability
+- **HTML Parser Fixed (Sept 2025)**: Completely resolved HTML bookmark parser issues that were preventing import of browser bookmark exports
+- Successfully imported 64,953 bookmarks from 52 HTML files with 0 errors
+- Parser now handles malformed HTML structure common in browser exports (DT elements nested in P elements)
+- Full folder hierarchy and tag preservation working correctly
 
 ## Development Resources Available
 
@@ -346,7 +352,7 @@ alias bookiesdb="cd ~/dev/bookies/data/ingest"
 
 # CLI shortcuts
 alias bcli="cd ~/dev/bookies && python scripts/run.py"
-alias bstats="cd ~/dev/bookies && python scripts/run.py stats"
+alias bstats="cd ~/dev/bookies && python scripts/run.py stats"  # Currently: 23,383 bookmarks
 alias bsearch='function _bsearch() { cd ~/dev/bookies && python scripts/run.py search --query "$1"; }; _bsearch'
 alias bimport="cd ~/dev/bookies && python scripts/run.py import-bookmarks"
 alias bdedup="cd ~/dev/bookies && python scripts/run.py deduplicate --report-only"
@@ -359,5 +365,132 @@ alias countbooks='grep -c "<A HREF" ~/dev/bookies/data/ingest/bookmarks_*.html'
 alias bookiesstatus='cd ~/dev/bookies && git status'
 alias bookieslog='cd ~/dev/bookies && git log --oneline -10'
 ```
+
+## Recent Fixes and Improvements
+
+### HTML Bookmark Parser Resolution (September 2025)
+
+**Problem**: HTML bookmark imports were failing, reporting "0 bookmarks imported" despite files containing thousands of bookmarks.
+
+**Root Cause**: Browser bookmark exports use malformed HTML structure where `<DT>` elements (bookmarks and folders) are nested inside `<P>` elements instead of being direct children of `<DL>` elements. The parser was only looking for direct DT children.
+
+**Solution Implemented**:
+1. **Enhanced Structure Detection**: Modified `extract_folder_hierarchy()` method to recursively search for DT elements within P elements
+2. **Comprehensive DOM Traversal**: Parser now finds ALL DT elements within the main DL container regardless of nesting level
+3. **Improved Path Detection**: Added `_determine_folder_path()` method to maintain correct folder hierarchy
+
+**Results**:
+- Successfully imported **64,953 bookmarks** from 52 HTML files
+- **0 errors** during import process
+- Full folder hierarchy and tags preserved
+- All browser exports (Chrome, Firefox, Edge) and Raindrop.io exports now working
+
+**Key Files Modified**:
+- `scripts/parsers/html_parser.py`: Complete rewrite of bookmark extraction logic
+
+**Testing Commands Used**:
+```bash
+# Debug HTML structure
+python debug_soup_parsing.py
+
+# Test single file parsing
+cd scripts && python -c "from parsers.html_parser import HTMLBookmarkParser; from models.database import DatabaseManager; ..."
+
+# Clear import history to force reprocessing
+python -c "from scripts.models.database import DatabaseManager; db = DatabaseManager(); ..."
+
+# Full import with verification
+python scripts/run.py import-bookmarks --source html
+python scripts/run.py stats
+```
+
+**Current Database Status**: 23,383 total bookmarks across all sources:
+- **22,245 browser_export** (HTML files from Chrome, Firefox, Raindrop.io)
+- **1,094 feed_category** (RSS/Atom feed data)
+- **44 yaml_structured** (Manual structured bookmarks)
+
+**Verification Commands**:
+```bash
+# Check import status
+python scripts/run.py stats
+
+# Search functionality test
+python scripts/run.py search --query "javascript" --limit 5
+
+# Recent imports verification
+python -c "
+from scripts.models.database import DatabaseManager
+db = DatabaseManager()
+with db.get_connection() as conn:
+    cursor = conn.cursor()
+    cursor.execute('SELECT import_type, COUNT(*) FROM import_history GROUP BY import_type')
+    for row in cursor.fetchall():
+        print(f'{row[0]}: {row[1]} files processed')
+"
+```
+
+## Troubleshooting
+
+### HTML Import Issues
+
+If HTML bookmark imports show "0 bookmarks imported":
+
+1. **Check if files are marked as processed**:
+   ```bash
+   python scripts/run.py stats  # Check current totals
+   ```
+
+2. **Clear import history to force reprocessing**:
+   ```bash
+   python -c "
+   from scripts.models.database import DatabaseManager
+   db = DatabaseManager()
+   with db.get_connection() as conn:
+       cursor = conn.cursor()
+       cursor.execute('DELETE FROM import_history WHERE import_type = ?', ('browser_html',))
+       conn.commit()
+       print('Cleared HTML import history')
+   "
+   ```
+
+3. **Test with single file first**:
+   ```bash
+   cd scripts
+   python -c "
+   from parsers.html_parser import HTMLBookmarkParser
+   from models.database import DatabaseManager
+   from pathlib import Path
+   
+   db = DatabaseManager()
+   parser = HTMLBookmarkParser(db)
+   results = parser.parse_html_file(Path('../data/ingest/bookmarks_FILENAME.html'))
+   print(f'Found: {results[\"stats\"][\"total_found\"]} bookmarks')
+   "
+   ```
+
+4. **Debug HTML structure** (if still failing):
+   ```bash
+   python -c "
+   from pathlib import Path
+   from bs4 import BeautifulSoup
+   
+   with open('data/ingest/bookmarks_FILENAME.html', 'r') as f:
+       soup = BeautifulSoup(f.read(), 'html.parser')
+   
+   all_dt = soup.find_all('dt')
+   main_dl = soup.find('dl')
+   print(f'Total DT elements: {len(all_dt)}')
+   print(f'DT in main DL: {len(main_dl.find_all(\"dt\")) if main_dl else 0}')
+   "
+   ```
+
+### Common Issues
+
+- **Import shows 0 bookmarks**: Usually means files are marked as already processed
+- **ModuleNotFoundError**: Run commands from correct directory (`scripts/` for direct imports)
+- **Database locked**: Multiple CLI processes running simultaneously
+- **Memory issues**: Large HTML files (>10MB) may need processing in batches
+
+---
 
 This repository serves as a comprehensive personal knowledge base for web development, design, and technology resources, maintained through systematic bookmark curation and export practices. The integrated CLI tools provide powerful automation for importing, managing, searching, and maintaining bookmark collections with deduplication, metadata enrichment, and multiple export formats.

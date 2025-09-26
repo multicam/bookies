@@ -126,6 +126,11 @@ class DatabaseManager:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_url_hash ON bookmarks(url_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_collections_parent_id ON collections(parent_id)")
+            
+            # Optimized indexes for deduplication queries
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_status_domain ON bookmarks(status, domain) WHERE status = 'active'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_status_url_hash ON bookmarks(status, url_hash) WHERE status = 'active'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_domain_created ON bookmarks(domain, created_at) WHERE status = 'active'")
 
             # Full-text search virtual table
             conn.execute("""

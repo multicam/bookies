@@ -2,33 +2,40 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useRef, useMemo } from 'react'
-import type { BookmarkWithTags, ViewMode } from '@/lib/types'
+import type { BookmarkWithTags, ViewMode, BookmarkFilters, SortConfig } from '@/lib/types'
 import { BookmarkCard } from './bookmark-card'
-import { BookmarkListItem } from './bookmark-list-item'
-import { BookmarkCompactItem } from './bookmark-compact-item'
+import { useInfiniteBookmarks } from '@/lib/hooks/use-bookmarks'
 
 interface VirtualBookmarkListProps {
-  bookmarks: BookmarkWithTags[]
+  filters: BookmarkFilters
+  sort: SortConfig
   viewMode: ViewMode
-  isLoading?: boolean
-  hasMore?: boolean
-  onLoadMore?: () => void
   onBookmarkSelect?: (bookmark: BookmarkWithTags) => void
   selectedBookmarks?: Set<number>
   className?: string
 }
 
 export function VirtualBookmarkList({
-  bookmarks,
+  filters,
+  sort,
   viewMode,
-  isLoading = false,
-  hasMore = false,
-  onLoadMore,
   onBookmarkSelect,
   selectedBookmarks = new Set(),
   className = ''
 }: VirtualBookmarkListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
+
+  // Use the bookmarks hook
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    isError
+  } = useInfiniteBookmarks(filters, sort)
+
+  const bookmarks = data?.pages.flatMap(page => page.items) || []
 
   // Calculate item size based on view mode
   const estimateSize = useMemo(() => {
@@ -47,7 +54,7 @@ export function VirtualBookmarkList({
   }, [viewMode])
 
   const virtualizer = useVirtualizer({
-    count: bookmarks.length + (hasMore ? 1 : 0), // Add 1 for loading indicator
+    count: bookmarks.length + (hasNextPage ? 1 : 0), // Add 1 for loading indicator
     getScrollElement: () => parentRef.current,
     estimateSize: () => estimateSize,
     overscan: 5,
@@ -55,71 +62,67 @@ export function VirtualBookmarkList({
 
   // Load more when approaching the end
   const lastItem = virtualizer.getVirtualItems().slice(-1)[0]
-  if (lastItem && lastItem.index >= bookmarks.length - 3 && hasMore && !isLoading && onLoadMore) {
-    onLoadMore()
+  if (lastItem && lastItem.index >= bookmarks.length - 3 && hasNextPage && !isFetchingNextPage) {
+    fetchNextPage()
   }
 
   const renderBookmarkItem = (bookmark: BookmarkWithTags, index: number) => {
     const isSelected = selectedBookmarks.has(bookmark.id)
 
-    switch (viewMode) {
-      case 'compact':
-        return (
-          <BookmarkCompactItem
-            key={`${bookmark.id}-${index}`}
-            bookmark={bookmark}
-            isSelected={isSelected}
-            onSelect={() => onBookmarkSelect?.(bookmark)}
-          />
-        )
-      case 'list':
-        return (
-          <BookmarkListItem
-            key={`${bookmark.id}-${index}`}
-            bookmark={bookmark}
-            isSelected={isSelected}
-            onSelect={() => onBookmarkSelect?.(bookmark)}
-          />
-        )
-      case 'card':
-      case 'grid':
-        return (
-          <BookmarkCard
-            key={`${bookmark.id}-${index}`}
-            bookmark={bookmark}
-            isSelected={isSelected}
-            onSelect={() => onBookmarkSelect?.(bookmark)}
-            variant={viewMode === 'grid' ? 'compact' : 'default'}
-          />
-        )
-      default:
-        return (
-          <BookmarkListItem
-            key={`${bookmark.id}-${index}`}
-            bookmark={bookmark}
-            isSelected={isSelected}
-            onSelect={() => onBookmarkSelect?.(bookmark)}
-          />
-        )
-    }
+    return (
+      <BookmarkCard
+        key={`${bookmark.id}-${index}`}
+        bookmark={bookmark}
+        isSelected={isSelected}
+        onSelect={() => onBookmarkSelect?.(bookmark)}
+        viewMode={viewMode}
+      />
+    )
   }
 
-  const getContainerClass = () => {
-    const base = "w-full"
-
-    switch (viewMode) {
-      case 'grid':
-        return `${base} grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4`
-      case 'card':
-        return `${base} space-y-4`
-      case 'list':
-        return `${base} space-y-2`
-      case 'compact':
-        return `${base} space-y-1`
-      default:
-        return `${base} space-y-2`
-    }
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin h-8 w-8 border-b-2 border-primary rounded-full"></div>
+      </div>
+    )
   }
+
+  // Show error state
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        <p>Failed to load bookmarks. Please try again.</p>
+      </div>
+    )
+  }
+
+  // Show empty state
+  if (!bookmarks.length) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        <p>No bookmarks found. Try adjusting your filters or adding some bookmarks.</p>
+      </div>
+    )
+  }
+
+  // const getContainerClass = () => {
+  //   const base = "w-full"
+
+  //   switch (viewMode) {
+  //     case 'grid':
+  //       return `${base} grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4`
+  //     case 'card':
+  //       return `${base} space-y-4`
+  //     case 'list':
+  //       return `${base} space-y-2`
+  //     case 'compact':
+  //       return `${base} space-y-1`
+  //     default:
+  //       return `${base} space-y-2`
+  //   }
+  // }
 
   if (viewMode === 'grid') {
     // Grid view uses a different approach due to CSS Grid
@@ -135,9 +138,9 @@ export function VirtualBookmarkList({
           {bookmarks.map((bookmark, index) => renderBookmarkItem(bookmark, index))}
 
           {/* Loading indicator */}
-          {isLoading && (
+          {isFetchingNextPage && (
             <div className="col-span-full flex items-center justify-center py-8">
-              <div className="animate-spin h-8 w-8 border-b-2 border-primary"></div>
+              <div className="animate-spin h-8 w-8 border-b-2 border-primary rounded-full"></div>
             </div>
           )}
         </div>
@@ -179,9 +182,9 @@ export function VirtualBookmarkList({
             >
               {isLoaderRow ? (
                 // Loading indicator
-                isLoading ? (
+                isFetchingNextPage ? (
                   <div className="flex items-center justify-center h-full">
-                    <div className="animate-spin h-6 w-6 border-b-2 border-primary"></div>
+                    <div className="animate-spin h-6 w-6 border-b-2 border-primary rounded-full"></div>
                   </div>
                 ) : null
               ) : (

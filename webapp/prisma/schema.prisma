@@ -1,124 +1,142 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:/home/jean-marc/dev/bookies/database/bookmarks.db"
 }
 
 model Bookmark {
-  id            Int       @id @default(autoincrement())
-  url           String    @unique
+  id            Int                  @id @default(autoincrement())
+  url           String               @unique(map: "sqlite_autoindex_bookmarks_1")
   title         String?
   description   String?
   domain        String?
-  urlHash       String    @unique @map("url_hash")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-  importedAt    DateTime? @map("imported_at")
-  source        String    @default("manual") // 'browser_export', 'manual', 'raindrop', etc.
-  sourceFile    String?   @map("source_file")
-  status        Status    @default(ACTIVE)
-  faviconUrl    String?   @map("favicon_url")
-  screenshotUrl String?   @map("screenshot_url")
-  contentType   String?   @map("content_type")
+  urlHash       String               @unique(map: "sqlite_autoindex_bookmarks_2") @map("url_hash")
+  createdAt     DateTime?            @default(now()) @map("created_at")
+  updatedAt     DateTime?            @default(now()) @updatedAt @map("updated_at")
+  importedAt    DateTime?            @default(now()) @map("imported_at")
+  source        String
+  sourceFile    String?              @map("source_file")
+  status        String?              @default("active")
+  faviconUrl    String?              @map("favicon_url")
+  screenshotUrl String?              @map("screenshot_url")
+  contentType   String?              @map("content_type")
   language      String?
-  readStatus    Boolean   @default(false) @map("read_status")
-  favorite      Boolean   @default(false)
+  readStatus    Boolean?             @default(false) @map("read_status")
+  favorite      Boolean?             @default(false)
+  collections   BookmarkCollection[]
+  tags          BookmarkTag[]
 
-  // Relations
-  tags        BookmarkTag[]
-  collections BookmarkCollection[]
-
+  @@index([urlHash], map: "idx_bookmarks_url_hash")
+  @@index([source], map: "idx_bookmarks_source")
+  @@index([createdAt], map: "idx_bookmarks_created_at")
+  @@index([domain], map: "idx_bookmarks_domain")
+  @@index([url], map: "idx_bookmarks_url")
   @@map("bookmarks")
 }
 
 model Tag {
-  id         Int      @id @default(autoincrement())
-  name       String   @unique
-  color      String   @default("#6B7280")
-  createdAt  DateTime @default(now()) @map("created_at")
-  usageCount Int      @default(0) @map("usage_count")
+  id         Int           @id @default(autoincrement())
+  name       String        @unique(map: "sqlite_autoindex_tags_1")
+  color      String?       @default("#6B7280")
+  createdAt  DateTime?     @default(now()) @map("created_at")
+  usageCount Int?          @default(0) @map("usage_count")
+  bookmarks  BookmarkTag[]
 
-  // Relations
-  bookmarks BookmarkTag[]
-
+  @@index([name], map: "idx_tags_name")
   @@map("tags")
 }
 
 model BookmarkTag {
-  bookmarkId Int      @map("bookmark_id")
-  tagId      Int      @map("tag_id")
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  // Relations
-  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
-  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  bookmarkId Int       @map("bookmark_id")
+  tagId      Int       @map("tag_id")
+  createdAt  DateTime? @default(now()) @map("created_at")
+  tag        Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  bookmark   Bookmark  @relation(fields: [bookmarkId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([bookmarkId, tagId])
   @@map("bookmark_tags")
 }
 
 model Collection {
-  id          Int      @id @default(autoincrement())
+  id          Int                  @id @default(autoincrement())
   name        String
   description String?
-  parentId    Int?     @map("parent_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  color       String   @default("#6B7280")
+  parentId    Int?                 @map("parent_id")
+  createdAt   DateTime?            @default(now()) @map("created_at")
+  updatedAt   DateTime?            @default(now()) @updatedAt @map("updated_at")
+  color       String?              @default("#6B7280")
   icon        String?
+  bookmarks   BookmarkCollection[]
+  parent      Collection?          @relation("CollectionHierarchy", fields: [parentId], references: [id], onUpdate: NoAction)
+  children    Collection[]         @relation("CollectionHierarchy")
 
-  // Self-referencing relation for hierarchical collections
-  parent   Collection? @relation("CollectionHierarchy", fields: [parentId], references: [id])
-  children Collection[] @relation("CollectionHierarchy")
-
-  // Relations
-  bookmarks BookmarkCollection[]
-
+  @@index([parentId], map: "idx_collections_parent_id")
   @@map("collections")
 }
 
 model BookmarkCollection {
-  bookmarkId   Int      @map("bookmark_id")
-  collectionId Int      @map("collection_id")
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  // Relations
-  bookmark   Bookmark   @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
-  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  bookmarkId   Int        @map("bookmark_id")
+  collectionId Int        @map("collection_id")
+  createdAt    DateTime?  @default(now()) @map("created_at")
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  bookmark     Bookmark   @relation(fields: [bookmarkId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([bookmarkId, collectionId])
   @@map("bookmark_collections")
 }
 
 model ImportHistory {
-  id                Int      @id @default(autoincrement())
+  id                Int       @id @default(autoincrement())
   filename          String
-  filePath          String   @map("file_path")
-  fileHash          String   @map("file_hash")
-  importType        String   @map("import_type") // 'browser_html', 'yaml_structured', 'feed_category'
-  processedAt       DateTime @default(now()) @map("processed_at")
-  bookmarksImported Int      @default(0) @map("bookmarks_imported")
-  bookmarksSkipped  Int      @default(0) @map("bookmarks_skipped")
+  filePath          String    @map("file_path")
+  fileHash          String    @map("file_hash")
+  importType        String    @map("import_type")
+  processedAt       DateTime? @default(now()) @map("processed_at")
+  bookmarksImported Int?      @default(0) @map("bookmarks_imported")
+  bookmarksSkipped  Int?      @default(0) @map("bookmarks_skipped")
   errors            String?
 
-  @@unique([filePath, fileHash])
+  @@unique([filePath, fileHash], map: "sqlite_autoindex_import_history_1")
   @@map("import_history")
 }
 
-enum Status {
-  ACTIVE
-  ARCHIVED
-  BROKEN
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model bookmark_search {
+  title       Unsupported("")?
+  description Unsupported("")?
+  url         Unsupported("")?
+  tags        Unsupported("")?
+
+  @@ignore
 }
 
-// Indexes for better performance
-// These would be added via Prisma migrate
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model bookmark_search_config {
+  k Unsupported("")  @id
+  v Unsupported("")?
+
+  @@ignore
+}
+
+model bookmark_search_data {
+  id    Int    @id @default(autoincrement())
+  block Bytes?
+}
+
+model bookmark_search_docsize {
+  id Int    @id @default(autoincrement())
+  sz Bytes?
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model bookmark_search_idx {
+  segid Unsupported("")
+  term  Unsupported("")
+  pgno  Unsupported("")?
+
+  @@id([segid, term])
+  @@ignore
+}
