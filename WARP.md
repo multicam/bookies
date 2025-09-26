@@ -23,13 +23,28 @@ This repository serves as a personal bookmark and content curation system. It co
 ```
 bookies/
 ├── data/
-│   └── db/
-│       ├── +++.md                    # Special bookmarks with metadata
+│   └── ingest/
+│       ├── +++.md                    # Structured bookmarks with YAML metadata
 │       ├── Dev Notes.md              # Development resources and notes
 │       ├── index.md                  # Main index/entry file
 │       ├── feed.xml                  # RSS/Atom feed data
-│       └── *.html                    # Browser bookmark exports by date
-└── .gitignore                        # Git ignore file (excludes .idea/)
+│       ├── bookmarks_*.html          # Browser bookmark exports by date
+│       ├── Raindrop.io-*.html        # Raindrop.io service exports
+│       └── --db-feeds/               # Categorized bookmark feeds by topic
+├── scripts/
+│   ├── models/
+│   │   └── database.py               # Database management and schema
+│   ├── parsers/
+│   │   ├── html_parser.py            # HTML bookmark file parser
+│   │   ├── yaml_parser.py            # YAML structured bookmark parser
+│   │   └── feed_processor.py         # Feed category processor
+│   ├── utils/
+│   │   ├── deduplication.py          # Bookmark deduplication engine
+│   │   └── metadata_extractor.py     # Web metadata extraction
+│   ├── cli.py                        # Command-line interface
+│   └── run.py                        # Main CLI entry point
+├── CLAUDE.md                         # Claude AI guidance
+└── .gitignore                        # Git ignore file
 ```
 
 ## Content Types
@@ -132,14 +147,112 @@ grep -h "github.com" data/ingest/bookmarks_*.html data/ingest/*.md
 cat data/ingest/"Dev Notes.md"
 ```
 
+## CLI Tools
+
+The repository includes a comprehensive command-line interface for bookmark management:
+
+### Running the CLI
+```bash
+# From repository root
+python scripts/run.py --help
+
+# With verbose logging
+python scripts/run.py --verbose stats
+
+# Specify custom database location
+python scripts/run.py --database /path/to/bookmarks.db stats
+```
+
+### Available Commands
+
+#### Import Operations
+```bash
+# Import all bookmark sources
+python scripts/run.py import-bookmarks
+
+# Import only HTML browser exports
+python scripts/run.py import-bookmarks --source html
+
+# Import structured YAML bookmarks
+python scripts/run.py import-bookmarks --source yaml
+
+# Import categorized feeds
+python scripts/run.py import-bookmarks --source feeds
+
+# Import from specific directory
+python scripts/run.py import-bookmarks --directory /path/to/bookmarks
+```
+
+#### Search and Discovery
+```bash
+# Search bookmark titles and content
+python scripts/run.py search --query "javascript framework"
+
+# Filter by tags
+python scripts/run.py search --tag "design"
+
+# Filter by domain
+python scripts/run.py search --domain "github.com"
+
+# Limit results and change format
+python scripts/run.py search --query "react" --limit 10 --format json
+```
+
+#### Deduplication
+```bash
+# Generate deduplication report
+python scripts/run.py deduplicate --report-only
+
+# Run automatic deduplication
+python scripts/run.py deduplicate --auto --similarity 0.9
+
+# Interactive deduplication
+python scripts/run.py deduplicate
+```
+
+#### Metadata Enrichment
+```bash
+# Enrich bookmarks with web metadata
+python scripts/run.py enrich --batch-size 50 --max-workers 5
+
+# Validate bookmark URLs
+python scripts/run.py validate --batch-size 100
+```
+
+#### Data Management
+```bash
+# Add new bookmark manually
+python scripts/run.py add --url "https://example.com" --title "Example" --tags "reference,tools"
+
+# Show database statistics
+python scripts/run.py stats
+
+# Export bookmarks to various formats
+python scripts/run.py export --format json --output bookmarks.json
+python scripts/run.py export --format csv --tag "development"
+python scripts/run.py export --format yaml --output dev-bookmarks.yaml
+```
+
+### CLI Architecture
+
+The CLI system consists of:
+- **Database Layer** (`models/database.py`): SQLite database management with FTS5 search
+- **Parsers** (`parsers/`): HTML, YAML, and feed format processors
+- **Utils** (`utils/`): Deduplication engine and metadata extraction
+- **CLI Interface** (`cli.py`): Click-based command interface
+- **Entry Point** (`run.py`): Main application launcher
+
+**Recent Improvements**: All relative import issues have been resolved, and the CLI is fully functional. The system now uses absolute imports for better module resolution and reliability.
+
 ## Development Resources Available
 
-This repository contains curated links to:
-- **UI/UX Tools**: Design systems, wireframing tools, mockup generators
-- **Development Frameworks**: React, Svelte, Node.js libraries
-- **AI Resources**: Prompting guides, ML tools and platforms
-- **Animation Libraries**: CSS animation tools and JavaScript libraries
+This repository contains curated collections of:
+- **UI/UX Tools**: Design systems, wireframing, mockup generators
+- **Development Frameworks**: React, Svelte, TanStack Query, Node.js libraries
+- **AI Resources**: Meta prompting techniques, ML tools, OpenAI cookbook
+- **Animation Libraries**: CSS animations, scroll-driven animations
 - **Performance Tools**: Testing frameworks, monitoring solutions
+- **Typography**: Google Fonts integration guides
 - **Database Tools**: SQL utilities, database administration tools
 
 ## File Formats and Standards
@@ -150,10 +263,20 @@ This repository contains curated links to:
 - Contains ADD_DATE timestamps and folder structures
 - Preserves bookmark hierarchy and organization
 
-### Markdown Metadata Format
-- YAML front matter with id, url, created date, tags, and source
-- Structured content blocks separated by `---`
-- Links to original sources and references
+### Structured Bookmarks (+++.md)
+- YAML front matter with `id`, `url`, `created`, `tags`, `source` fields
+- Entries separated by `---` dividers
+- Sequential ID numbering system
+- Example format:
+  ```yaml
+  ---
+  id: 4066
+  url: https://example.com
+  created: 2023-01-01
+  tags: [ux, design]
+  source: manual
+  ---
+  ```
 
 ### XML Feed Format
 - Atom 1.0 specification compliance
@@ -221,7 +344,14 @@ Add these to your `~/.bashrc` for quick access:
 alias bookies="cd ~/dev/bookies"
 alias bookiesdb="cd ~/dev/bookies/data/ingest"
 
-# Quick searches
+# CLI shortcuts
+alias bcli="cd ~/dev/bookies && python scripts/run.py"
+alias bstats="cd ~/dev/bookies && python scripts/run.py stats"
+alias bsearch='function _bsearch() { cd ~/dev/bookies && python scripts/run.py search --query "$1"; }; _bsearch'
+alias bimport="cd ~/dev/bookies && python scripts/run.py import-bookmarks"
+alias bdedup="cd ~/dev/bookies && python scripts/run.py deduplicate --report-only"
+
+# Quick searches (traditional)
 alias searchbooks='function _search() { grep -r -i "$1" ~/dev/bookies/data/ingest/; }; _search'
 alias countbooks='grep -c "<A HREF" ~/dev/bookies/data/ingest/bookmarks_*.html'
 
@@ -230,4 +360,4 @@ alias bookiesstatus='cd ~/dev/bookies && git status'
 alias bookieslog='cd ~/dev/bookies && git log --oneline -10'
 ```
 
-This repository serves as a comprehensive personal knowledge base for web development, design, and technology resources, maintained through systematic bookmark curation and export practices.
+This repository serves as a comprehensive personal knowledge base for web development, design, and technology resources, maintained through systematic bookmark curation and export practices. The integrated CLI tools provide powerful automation for importing, managing, searching, and maintaining bookmark collections with deduplication, metadata enrichment, and multiple export formats.

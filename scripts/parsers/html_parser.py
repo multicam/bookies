@@ -31,49 +31,104 @@ class HTMLBookmarkParser:
             self.logger.error(f"Error calculating hash for {file_path}: {e}")
             return ""
 
-    def extract_folder_hierarchy(self, element, path: List[str] = None) -> List[Dict[str, Any]]:
+    def extract_folder_hierarchy(self, element, path: List[str] = None, processed_elements: set = None) -> List[Dict[str, Any]]:
         """Extract bookmarks and folder structure from HTML."""
         if path is None:
             path = []
+        if processed_elements is None:
+            processed_elements = set()
 
         bookmarks = []
 
-        # Find all direct children
-        for child in element.find_all(['dt'], recursive=False):
-            # Check if this is a folder (H3 element)
-            h3 = child.find('h3')
-            if h3:
-                folder_name = h3.get_text(strip=True)
-                # Skip empty folder names or bookmark bars
-                if folder_name and folder_name.lower() not in ['bookmarks', 'bookmarks bar']:
-                    new_path = path + [folder_name]
+        # For the main DL element, we need to find ALL DT elements recursively
+        # because browser exports often have malformed HTML structure
+        if not path:  # This is the root call
+            # Get all DT elements within this element, regardless of nesting
+            all_dt_elements = element.find_all('dt')
+            
+            # Process each DT element, but keep track of folder structure
+            for dt in all_dt_elements:
+                if id(dt) in processed_elements:
+                    continue
+                processed_elements.add(id(dt))
+                
+                # Determine the path for this element by looking at its ancestors
+                current_path = self._determine_folder_path(dt, element)
+                
+                # Check if this is a folder (H3 element)
+                h3 = dt.find('h3')
+                if h3:
+                    folder_name = h3.get_text(strip=True)
+                    # Skip main "Bookmarks" folder as it's just a container
+                    if folder_name and folder_name.lower() not in ['bookmarks', 'bookmarks bar']:
+                        # For folders, we don't add them as bookmarks, but we note the path
+                        continue
 
-                    # Find the DL element that contains this folder's bookmarks
-                    dl = child.find_next_sibling('dt')
-                    if dl:
-                        # Recursively process the folder contents
-                        folder_bookmarks = self.extract_folder_hierarchy(dl, new_path)
-                        bookmarks.extend(folder_bookmarks)
-                    else:
-                        # Look for DL within the DT
-                        dl = child.find('dl')
+                # Check if this is a bookmark (A element)
+                link = dt.find('a')
+                if link:
+                    bookmark = self.extract_bookmark_info(link, current_path)
+                    if bookmark:
+                        bookmarks.append(bookmark)
+        else:
+            # For nested calls, use the old logic
+            dt_children = []
+            dt_children.extend(element.find_all(['dt'], recursive=False))
+            for p in element.find_all('p', recursive=False):
+                dt_children.extend(p.find_all('dt', recursive=False))
+            
+            for child in dt_children:
+                if id(child) in processed_elements:
+                    continue
+                processed_elements.add(id(child))
+                
+                # Check if this is a folder (H3 element)
+                h3 = child.find('h3')
+                if h3:
+                    folder_name = h3.get_text(strip=True)
+                    if folder_name and folder_name.lower() not in ['bookmarks', 'bookmarks bar']:
+                        new_path = path + [folder_name]
+                        # Find the DL element that contains this folder's bookmarks
+                        dl = child.find_next_sibling('dl')
                         if dl:
-                            folder_bookmarks = self.extract_folder_hierarchy(dl, new_path)
+                            folder_bookmarks = self.extract_folder_hierarchy(dl, new_path, processed_elements)
                             bookmarks.extend(folder_bookmarks)
+                        else:
+                            dl = child.find('dl')
+                            if dl:
+                                folder_bookmarks = self.extract_folder_hierarchy(dl, new_path, processed_elements)
+                                bookmarks.extend(folder_bookmarks)
 
-            # Check if this is a bookmark (A element)
-            link = child.find('a')
-            if link:
-                bookmark = self.extract_bookmark_info(link, path)
-                if bookmark:
-                    bookmarks.append(bookmark)
-
-        # Also check direct DL children
-        for dl in element.find_all(['dl'], recursive=False):
-            folder_bookmarks = self.extract_folder_hierarchy(dl, path)
-            bookmarks.extend(folder_bookmarks)
+                # Check if this is a bookmark (A element)
+                link = child.find('a')
+                if link:
+                    bookmark = self.extract_bookmark_info(link, path)
+                    if bookmark:
+                        bookmarks.append(bookmark)
 
         return bookmarks
+    
+    def _determine_folder_path(self, dt_element, root_element) -> List[str]:
+        """Determine the folder path for a DT element by examining its ancestors."""
+        path = []
+        
+        # Walk up the DOM tree to find folder ancestors
+        current = dt_element.parent
+        while current and current != root_element:
+            # Look for sibling DT elements with H3 (folder) elements
+            if current.name in ['dl', 'p']:
+                # Check if there's a preceding DT with H3 that could be a folder
+                for sibling in current.find_previous_siblings():
+                    if sibling.name == 'dt':
+                        h3 = sibling.find('h3')
+                        if h3:
+                            folder_name = h3.get_text(strip=True)
+                            if folder_name and folder_name.lower() not in ['bookmarks', 'bookmarks bar']:
+                                path.insert(0, folder_name)
+                            break
+            current = current.parent
+        
+        return path
 
     def extract_bookmark_info(self, link_element, folder_path: List[str]) -> Optional[Dict[str, Any]]:
         """Extract bookmark information from anchor element."""
