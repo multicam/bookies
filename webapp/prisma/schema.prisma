@@ -1,0 +1,124 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Bookmark {
+  id            Int       @id @default(autoincrement())
+  url           String    @unique
+  title         String?
+  description   String?
+  domain        String?
+  urlHash       String    @unique @map("url_hash")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  importedAt    DateTime? @map("imported_at")
+  source        String    @default("manual") // 'browser_export', 'manual', 'raindrop', etc.
+  sourceFile    String?   @map("source_file")
+  status        Status    @default(ACTIVE)
+  faviconUrl    String?   @map("favicon_url")
+  screenshotUrl String?   @map("screenshot_url")
+  contentType   String?   @map("content_type")
+  language      String?
+  readStatus    Boolean   @default(false) @map("read_status")
+  favorite      Boolean   @default(false)
+
+  // Relations
+  tags        BookmarkTag[]
+  collections BookmarkCollection[]
+
+  @@map("bookmarks")
+}
+
+model Tag {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
+  color      String   @default("#6B7280")
+  createdAt  DateTime @default(now()) @map("created_at")
+  usageCount Int      @default(0) @map("usage_count")
+
+  // Relations
+  bookmarks BookmarkTag[]
+
+  @@map("tags")
+}
+
+model BookmarkTag {
+  bookmarkId Int      @map("bookmark_id")
+  tagId      Int      @map("tag_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([bookmarkId, tagId])
+  @@map("bookmark_tags")
+}
+
+model Collection {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  parentId    Int?     @map("parent_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  color       String   @default("#6B7280")
+  icon        String?
+
+  // Self-referencing relation for hierarchical collections
+  parent   Collection? @relation("CollectionHierarchy", fields: [parentId], references: [id])
+  children Collection[] @relation("CollectionHierarchy")
+
+  // Relations
+  bookmarks BookmarkCollection[]
+
+  @@map("collections")
+}
+
+model BookmarkCollection {
+  bookmarkId   Int      @map("bookmark_id")
+  collectionId Int      @map("collection_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  bookmark   Bookmark   @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([bookmarkId, collectionId])
+  @@map("bookmark_collections")
+}
+
+model ImportHistory {
+  id                Int      @id @default(autoincrement())
+  filename          String
+  filePath          String   @map("file_path")
+  fileHash          String   @map("file_hash")
+  importType        String   @map("import_type") // 'browser_html', 'yaml_structured', 'feed_category'
+  processedAt       DateTime @default(now()) @map("processed_at")
+  bookmarksImported Int      @default(0) @map("bookmarks_imported")
+  bookmarksSkipped  Int      @default(0) @map("bookmarks_skipped")
+  errors            String?
+
+  @@unique([filePath, fileHash])
+  @@map("import_history")
+}
+
+enum Status {
+  ACTIVE
+  ARCHIVED
+  BROKEN
+}
+
+// Indexes for better performance
+// These would be added via Prisma migrate
